@@ -115,7 +115,8 @@
         // FUNCIÓN PARA ENVIAR DATOS AL SCRIPT DE GOOGLE APPS
         // ====================================================================
         window.sendToGoogleSheet = async (data) => {
-            const googleScriptURL = "https://script.google.com/a/macros/ucic.edu.mx/s/AKfycbwm5fDj3dFAdKC0f8rPX_WzOIgsQ9WOzGey_Vap2RxiKBrPZBQVyDHqjNN3KasRL7ZZGw/exec";
+            // * URL ACTUALIZADA SEGÚN LA SOLICITUD DEL USUARIO *
+            const googleScriptURL = "https://script.google.com/macros/s/AKfycbyN1ongMIiRbRjC-e9BsLLqNHhmOzZ9hHxA7jQXXd3wVhhyLYQyEQNYBlc1QsQid5o3Dg/exec";
             
             const cursoSeleccionado = data.curso;
             const precio = COURSES[cursoSeleccionado] || 'N/D';
