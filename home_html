@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shop Drop Sosa | Cursos de Boxeo y Hacks</title>
+    <!-- Carga de Tailwind CSS para el diseño rápido y responsivo -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Carga de las librerías de Firebase para autenticación y base de datos (Firestore) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Establece el nivel de log para depuración de Firestore
+        setLogLevel('debug');
+        
+        // Variables globales proporcionadas por el entorno (OBLIGATORIAS)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof _firebase_config !== 'undefined' ? JSON.parse(_firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Inicialización de Firebase (se realiza solo una vez)
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        
+        // Variables de estado global
+        let userId = null;
+        let isAuthReady = false;
+
+        // Objeto global para compartir instancias de Firebase y funciones
+        window.firebaseData = { db, auth, appId, userId: null, isAuthReady: false };
+
+        // 1. Manejo de la Autenticación
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                userId = user.uid;
+            } else if (initialAuthToken) {
+                try {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                    userId = auth.currentUser.uid;
+                } catch (error) {
+                    console.error("Error al iniciar sesión con Custom Token:", error);
+                    await signInAnonymously(auth);
+                    userId = auth.currentUser.uid;
+                }
+            } else {
+                await signInAnonymously(auth);
+                userId = auth.currentUser.uid;
+            }
+
+            // Actualizar variables de estado global y UI
+            window.firebaseData.userId = userId;
+            window.firebaseData.isAuthReady = true;
+            document.getElementById('userIdDisplay').textContent = userId;
+            document.getElementById('authStatus').textContent = 'Conectado';
+            document.getElementById('authStatus').classList.add('bg-green-500');
+            document.getElementById('authStatus').classList.remove('bg-red-500');
+
+            // 2. Iniciar la escucha de datos una vez que la autenticación esté lista
+            loadRegistrations(db, appId, userId);
+        });
+
+
+        // Objeto de precios para la lógica de guardado
+        const COURSES = {
+            'Boxear Básico': 100,
+            'Boxear Premium': 300,
+            'Boxear VIP Black': 650
+        };
+
+        // Función para guardar el registro en Firestore
+        window.saveRegistrationToDatabase = async (data) => {
+            if (!window.firebaseData.isAuthReady || !window.firebaseData.userId) {
+                console.error("Firebase no está listo o el usuario no está autenticado.");
+                return false;
+            }
+            
+            try {
+                // Ruta de Firestore para datos privados
+                const registrationCollectionRef = collection(
+                    window.firebaseData.db, 
+                    'artifacts', window.firebaseData.appId, 
+                    'users', window.firebaseData.userId, 
+                    'registrations'
+                );
+
+                const cursoSeleccionado = data.curso;
+                const precio = COURSES[cursoSeleccionado] || 'N/D';
+
+                const newRegistration = {
+                    nombre: data.nombre,
+                    telefono: data.telefono,
+                    correo: data.correo,
+                    direccion: data.direccion,
+                    cursoSeleccionado: cursoSeleccionado,
+                    precioUSD: precio,
+                    timestamp: serverTimestamp() 
+                };
+
+                await addDoc(registrationCollectionRef, newRegistration);
+                
+                console.log("1. Registro guardado exitosamente en Firestore.");
+                return true;
+
+            } catch (error) {
+                console.error("Error al guardar el registro en Firestore:", error);
+                return false;
+            }
+        };
+
+        // ====================================================================
+        // FUNCIÓN PARA ENVIAR DATOS AL SCRIPT DE GOOGLE APPS
+        // ====================================================================
+        window.sendToGoogleSheet = async (data) => {
+            const googleScriptURL = "https://script.google.com/a/macros/ucic.edu.mx/s/AKfycbwm5fDj3dFAdKC0f8rPX_WzOIgsQ9WOzGey_Vap2RxiKBrPZBQVyDHqjNN3KasRL7ZZGw/exec";
+            
+            const cursoSeleccionado = data.curso;
+            const precio = COURSES[cursoSeleccionado] || 'N/D';
+
+            // Preparar los datos que se enviarán al Script (similar al formato Excel)
+            const payload = {
+                Timestamp: new Date().toLocaleString('es-ES'), // Hora de envío local
+                Nombre: data.nombre,
+                Telefono: data.telefono,
+                Correo: data.correo,
+                Direccion: data.direccion,
+                Curso: cursoSeleccionado,
+                PrecioUSD: precio
+            };
+            
+            try {
+                const response = await fetch(googleScriptURL, {
+                    method: 'POST',
+                    // Enviar los datos como JSON
+                    body: JSON.stringify(payload),
+                    headers: {
+                        // El Content-Type debe ser 'application/json' para enviar JSON
+                        // o 'text/plain' si el script lo espera, usaremos 'application/json' por defecto
+                        'Content-Type': 'application/json' 
+                    }
+                });
+
+                if (response.ok) {
+                    console.log("2. Datos enviados exitosamente a Google Sheet.");
+                } else {
+                    console.error("Error al enviar datos a Google Sheet. Estado:", response.status);
+                }
+
+            } catch (error) {
+                console.error("Error de red al enviar datos a Google Sheet:", error);
+            }
+        };
+        // ====================================================================
+
+
+        // Función para cargar los registros en tiempo real (onSnapshot)
+        const loadRegistrations = (db, appId, userId) => {
+            const registrationCollectionRef = collection(
+                db, 
+                'artifacts', appId, 
+                'users', userId, 
+                'registrations'
+            );
+            
+            const q = query(registrationCollectionRef);
+
+            const registrationsList = document.getElementById('registrationsList');
+            const tableBody = document.getElementById('registrationTableBody');
+
+            onSnapshot(q, (snapshot) => {
+                const registrations = [];
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    registrations.push({ 
+                        id: doc.id, 
+                        timestamp: data.timestamp ? new Date(data.timestamp.toDate()).toLocaleString() : 'Pendiente',
+                        ...data 
+                    });
+                });
+
+                // Ordenar en memoria por fecha/hora (del más reciente al más antiguo)
+                registrations.sort((a, b) => {
+                    const dateA = a.timestamp === 'Pendiente' ? 0 : new Date(a.timestamp).getTime();
+                    const dateB = b.timestamp === 'Pendiente' ? 0 : new Date(b.timestamp).getTime();
+                    return dateB - dateA;
+                });
+
+                // Renderizar la tabla
+                tableBody.innerHTML = '';
+                if (registrations.length === 0) {
+                    registrationsList.classList.add('hidden');
+                    return;
+                }
+
+                registrationsList.classList.remove('hidden');
+
+                registrations.forEach(reg => {
+                    const row = tableBody.insertRow();
+                    row.className = 'bg-white border-b hover:bg-gray-50';
+                    
+                    const formattedDate = reg.timestamp || 'Pendiente'; 
+
+                    row.insertCell().textContent = reg.nombre || 'N/D';
+                    row.insertCell().textContent = reg.correo || 'N/D';
+                    row.insertCell().textContent = reg.cursoSeleccionado || 'N/D';
+                    row.insertCell().textContent = $${reg.precioUSD} || 'N/D';
+                    row.insertCell().textContent = formattedDate;
+                });
+            }, (error) => {
+                console.error("Error al escuchar los registros de Firestore:", error);
+                registrationsList.innerHTML = '<p class="text-red-600 text-center">Error al cargar los datos.</p>';
+            });
+        };
+        
+    </script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f7;
+        }
+        .logo-text {
+            color: #E53E3E;
+        }
+        .error-message {
+            display: none;
+            color: #e53e3e;
+            font-size: 0.875rem;
+            margin-top: 0.25rem;
+        }
+    </style>
+</head>
+<body class="antialiased text-gray-800">
+
+    <!-- COMIENZO DEL ENCABEZADO Y HERO -->
+    <header class="bg-white shadow-md">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+            <div>
+                <h1 class="text-4xl font-extrabold logo-text">Shop Drop Sosa</h1>
+                <p class="mt-1 text-xl text-gray-600 italic">Domina el ring y la mente.</p>
+            </div>
+            
+            <!-- Estado de la conexión a la base de datos y ID de usuario -->
+            <div class="text-right text-sm">
+                <span id="authStatus" class="inline-block px-3 py-1 text-white rounded-full bg-red-500 font-semibold">Desconectado</span>
+                <p class="text-gray-500 mt-1">ID de Sesión:</p>
+                <code id="userIdDisplay" class="text-xs font-mono text-gray-900 break-all">Cargando...</code>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        
+        <!-- SECCIÓN DE PRODUCTOS DESTACADOS (sin cambios) -->
+        <section class="mb-16">
+            <h2 class="text-3xl font-bold mb-8 text-center border-b-2 border-red-500 pb-3">Nuestros Cursos Estrella</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                
+                <!-- Tarjeta 1: Boxear Básico -->
+                <div class="bg-white p-6 rounded-xl shadow-xl hover:shadow-2xl transition duration-300 border-t-4 border-red-500">
+                    <h3 class="text-2xl font-bold mb-2 text-red-600">Boxear Básico</h3>
+                    <p class="text-gray-600 mb-4">Aprende los fundamentos: postura, jab y defensa básica. ¡Empieza a boxear hoy!</p>
+                    <div class="text-4xl font-extrabold text-right my-4 text-green-600">$100 USD</div>
+                    <ul class="list-disc ml-5 text-sm text-gray-700 space-y-1">
+                        <li>Lecciones introductorias</li>
+                    </ul>
+                </div>
+
+                <!-- Tarjeta 2: Boxear Premium -->
+                <div class="bg-white p-6 rounded-xl shadow-xl hover:shadow-2xl transition duration-300 border-t-4 border-blue-500">
+                    <h3 class="text-2xl font-bold mb-2 text-blue-600">Boxear Premium</h3>
+                    <p class="text-gray-600 mb-4">Combina el conocimiento básico con estrategia avanzada y acondicionamiento físico.</p>
+                    <div class="text-4xl font-extrabold text-right my-4 text-green-600">$300 USD</div>
+                    <ul class="list-disc ml-5 text-sm text-gray-700 space-y-1">
+                        <li>Combinaciones avanzadas</li>
+                    </ul>
+                </div>
+
+                <!-- Tarjeta 3: Boxear VIP Black -->
+                <div class="bg-gray-800 p-6 rounded-xl shadow-2xl hover:shadow-red-500/50 transition duration-300 border-t-4 border-yellow-400 text-white">
+                    <h3 class="text-2xl font-bold mb-2 text-yellow-400">Boxear VIP Black</h3>
+                    <p class="text-gray-400 mb-4">Acceso total a todos los cursos y mentoría personal de Sosa.</p>
+                    <div class="text-4xl font-extrabold text-right my-4 text-yellow-500">$650 USD</div>
+                    <ul class="list-disc ml-5 text-sm text-gray-300 space-y-1">
+                        <li>Mentoría individual 1:1</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECCIÓN DE FORMULARIO DE COMPRA -->
+        <section>
+            <h2 class="text-3xl font-bold mb-8 text-center border-b-2 border-red-500 pb-3">¡Inscríbete Ahora!</h2>
+            
+            <form id="purchaseForm" class="bg-white p-8 rounded-xl shadow-2xl max-w-lg mx-auto space-y-6">
+                
+                <!-- Campos del formulario (sin cambios) -->
+                <div>
+                    <label for="nombre" class="block text-sm font-medium text-gray-700 mb-1">Nombre Completo <span class="text-red-500">*</span></label>
+                    <input type="text" id="nombre" name="nombre" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" required>
+                    <p id="error-nombre" class="error-message">El nombre es obligatorio.</p>
+                </div>
+                
+                <div>
+                    <label for="correo" class="block text-sm font-medium text-gray-700 mb-1">Correo Electrónico <span class="text-red-500">*</span></label>
+                    <input type="email" id="correo" name="correo" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" required>
+                    <p id="error-correo" class="error-message">Ingresa un correo electrónico válido.</p>
+                </div>
+                
+                <div>
+                    <label for="telefono" class="block text-sm font-medium text-gray-700 mb-1">Teléfono (Mínimo 7 dígitos) <span class="text-red-500">*</span></label>
+                    <input type="tel" id="telefono" name="telefono" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" required pattern="[0-9]{7,}">
+                    <p id="error-telefono" class="error-message">Ingresa un número de teléfono válido (mínimo 7 dígitos numéricos).</p>
+                </div>
+                
+                <div>
+                    <label for="direccion" class="block text-sm font-medium text-gray-700 mb-1">Dirección <span class="text-red-500">*</span></label>
+                    <input type="text" id="direccion" name="direccion" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" required>
+                    <p id="error-direccion" class="error-message">La dirección es obligatoria.</p>
+                </div>
+                
+                <div>
+                    <label for="curso" class="block text-sm font-medium text-gray-700 mb-1">Curso Seleccionado <span class="text-red-500">*</span></label>
+                    <select id="curso" name="curso" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500 bg-white" required>
+                        <option value="" disabled selected>Selecciona una opción</option>
+                        <option value="Boxear Básico">Boxear Básico</option>
+                        <option value="Boxear Premium">Boxear Premium</option>
+                        <option value="Boxear VIP Black">Boxear VIP Black</option>
+                    </select>
+                    <p id="error-curso" class="error-message">Debes seleccionar un curso.</p>
+                </div>
+                
+                <!-- Botón de Envío -->
+                <button type="submit" id="submitButton" class="w-full py-3 px-4 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition duration-300 shadow-lg transform hover:scale-[1.01]">
+                    Comprar y Registrar Venta en Línea
+                </button>
+
+                <!-- Mensaje de éxito (oculto inicialmente) -->
+                <div id="successMessage" class="hidden text-center p-3 bg-green-100 text-green-800 rounded-lg font-medium">
+                    ¡Registro de compra exitoso! La venta se guardó en la base de datos y en Google Sheet.
+                </div>
+            </form>
+        </section>
+
+        <!-- SECCIÓN DE REGISTROS GUARDADOS (TU "EXCEL" EN LÍNEA) -->
+        <section id="registrationsList" class="mt-16 hidden">
+            <h2 class="text-3xl font-bold mb-8 text-center border-b-2 border-red-500 pb-3">Historial de Registros Guardados (Tu Base de Datos)</h2>
+
+            <div class="overflow-x-auto shadow-xl rounded-lg">
+                <table class="w-full text-sm text-left text-gray-500">
+                    <thead class="text-xs text-gray-700 uppercase bg-gray-50 border-b-2 border-red-500">
+                        <tr>
+                            <th scope="col" class="px-6 py-3">Nombre</th>
+                            <th scope="col" class="px-6 py-3">Correo</th>
+                            <th scope="col" class="px-6 py-3">Curso</th>
+                            <th scope="col" class="px-6 py-3">Precio</th>
+                            <th scope="col" class="px-6 py-3">Fecha de Registro</th>
+                        </tr>
+                    </thead>
+                    <tbody id="registrationTableBody">
+                        <!-- Las filas se insertarán aquí mediante JavaScript (Firestore) -->
+                    </tbody>
+                </table>
+            </div>
+            <p class="text-center text-sm text-gray-500 mt-4">Solo ves los registros asociados a tu ID de Sesión.</p>
+        </section>
+
+    </main>
+
+    <!-- COMIENZO DEL CÓDIGO JAVASCRIPT PRINCIPAL -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const form = document.getElementById('purchaseForm');
+            const successMessage = document.getElementById('successMessage');
+
+            // --- Funciones de Validación (Se mantienen iguales) ---
+            const isValidEmail = (email) => {
+                const re = /^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+                return re.test(String(email).toLowerCase());
+            };
+
+            const showError = (fieldId, message) => {
+                const errorElement = document.getElementById(error-${fieldId});
+                const inputElement = document.getElementById(fieldId);
+                errorElement.textContent = message;
+                errorElement.style.display = 'block';
+                inputElement.classList.add('border-red-500');
+                inputElement.classList.remove('border-gray-300');
+                return false;
+            };
+
+            const clearError = (fieldId) => {
+                const errorElement = document.getElementById(error-${fieldId});
+                const inputElement = document.getElementById(fieldId);
+                errorElement.style.display = 'none';
+                inputElement.classList.remove('border-red-500');
+                inputElement.classList.add('border-gray-300');
+            };
+
+            const validateForm = (formData) => {
+                let isValid = true;
+                
+                // 1. Nombre
+                if (formData.get('nombre').trim() === '') {
+                    isValid = showError('nombre', 'El nombre es obligatorio.');
+                } else { clearError('nombre'); }
+
+                // 2. Correo electrónico
+                const email = formData.get('correo');
+                if (email.trim() === '') {
+                    isValid = showError('correo', 'El correo es obligatorio.');
+                } else if (!isValidEmail(email)) {
+                    isValid = showError('correo', 'Ingresa un formato de correo válido (ej: user@dominio.com).');
+                } else { clearError('correo'); }
+
+                // 3. Teléfono
+                const phone = formData.get('telefono').replace(/[^0-9]/g, ''); 
+                if (phone === '') {
+                    isValid = showError('telefono', 'El teléfono es obligatorio.');
+                } else if (phone.length < 7 || isNaN(phone)) {
+                    isValid = showError('telefono', 'Debe ser un número de al menos 7 dígitos.');
+                } else { clearError('telefono'); }
+
+                // 4. Dirección
+                if (formData.get('direccion').trim() === '') {
+                    isValid = showError('direccion', 'La dirección es obligatoria.');
+                } else { clearError('direccion'); }
+
+                // 5. Curso Seleccionado
+                if (formData.get('curso') === '') {
+                    isValid = showError('curso', 'Debes seleccionar un curso.');
+                } else { clearError('curso'); }
+
+                return isValid;
+            };
+
+            // Manejador del evento de envío del formulario
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                const submitButton = document.getElementById('submitButton');
+                submitButton.disabled = true; // Deshabilitar para evitar múltiples envíos
+
+                const formData = new FormData(form);
+                const data = Object.fromEntries(formData.entries());
+
+                if (validateForm(formData)) {
+                    
+                    // --- PASO 1: Guardar en Firestore ---
+                    const dbSuccess = await window.saveRegistrationToDatabase(data);
+                    
+                    // --- PASO 2: Enviar a Google Apps Script si Firestore fue exitoso ---
+                    if (dbSuccess) {
+                        await window.sendToGoogleSheet(data);
+                        
+                        // Mostrar mensaje de éxito
+                        successMessage.classList.remove('hidden', 'bg-red-100', 'text-red-800');
+                        successMessage.classList.add('bg-green-100', 'text-green-800');
+                        successMessage.textContent = '¡Registro de compra exitoso! La venta se guardó en la base de datos y en Google Sheet.';
+                        form.reset(); // Limpiar formulario
+                        
+                        // Ocultar el mensaje de éxito después de 5 segundos
+                        setTimeout(() => {
+                            successMessage.classList.add('hidden');
+                        }, 5000);
+                    } else {
+                        // En caso de error de base de datos
+                        successMessage.textContent = 'Error al guardar los datos en la base de datos. Intenta de nuevo.';
+                        successMessage.classList.remove('hidden', 'bg-green-100', 'text-green-800');
+                        successMessage.classList.add('bg-red-100', 'text-red-800');
+                    }
+                }
+                
+                submitButton.disabled = false; // Habilitar el botón de nuevo
+            });
+        });
+    </script>
+</body>
+</html>
