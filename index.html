@@ -7,12 +7,19 @@
     <!-- Carga de Tailwind CSS para el diseño rápido y responsivo -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- Carga de las librerías de Firebase para autenticación y base de datos (Firestore) -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    <!-- ********************* -->
+    <!-- Carga de las librerías de Firebase usando el método CDN tradicional para máxima compatibilidad con GitHub Pages -->
+    <!-- ********************* -->
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
 
+    <script>
+        // Utiliza las funciones de Firebase directamente desde el ámbito global (window)
+        const { initializeApp } = firebase;
+        const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = firebase.auth;
+        const { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, setLogLevel } = firebase.firestore;
+        
         // Establece el nivel de log para depuración de Firestore
         setLogLevel('debug');
         
@@ -138,8 +145,6 @@
                     // Enviar los datos como JSON
                     body: JSON.stringify(payload),
                     headers: {
-                        // El Content-Type debe ser 'application/json' para enviar JSON
-                        // o 'text/plain' si el script lo espera, usaremos 'application/json' por defecto
                         'Content-Type': 'application/json' 
                     }
                 });
@@ -423,7 +428,6 @@
                 if (phone === '') {
                     isValid = showError('telefono', 'El teléfono es obligatorio.');
                 } else if (phone.length < 7 || isNaN(phone)) {
-                    // Esta es la línea donde probablemente estaba el error de sintaxis en tu copia anterior
                     isValid = showError('telefono', 'Debe ser un número de al menos 7 dígitos.');
                 } else { clearError('telefono'); }
 
@@ -482,4 +486,4 @@
         });
     </script>
 </body>
-</html> 
+</html>
