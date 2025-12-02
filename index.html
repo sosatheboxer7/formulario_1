@@ -423,6 +423,7 @@
                 if (phone === '') {
                     isValid = showError('telefono', 'El teléfono es obligatorio.');
                 } else if (phone.length < 7 || isNaN(phone)) {
+                    // Esta es la línea donde probablemente estaba el error de sintaxis en tu copia anterior
                     isValid = showError('telefono', 'Debe ser un número de al menos 7 dígitos.');
                 } else { clearError('telefono'); }
 
@@ -481,4 +482,4 @@
         });
     </script>
 </body>
-</html>
+</html> 
